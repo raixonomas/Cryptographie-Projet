@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Secure WebRTC Chat</title>
+  <style>
+    body { font-family: sans-serif; max-width: 900px; margin: auto; padding: 20px; }
+    #users button { display:block; margin:5px 0; }
+    #chat { border:1px solid #aaa; height:220px; overflow:auto; padding:10px; }
+    input { width: 100%; margin: 5px 0; }
+  </style>
+</head>
+<body>
+
+<h2>🔐 Secure WebRTC Chat (Fixed Version)</h2>
+
+<input id="name" placeholder="Your name" />
+<button onclick="connect()">Connect</button>
+
+<h3>Online Users</h3>
+<div id="users"></div>
+
+<hr>
+
+<div id="chat"></div>
+
+<input id="msg" placeholder="message..." />
+<button onclick="sendMessage()">Send</button>
+
+<script>
+let ws;
+let pc;
+let dc;
+let myId;
+
+let myKeyPair;
+let sharedKey;
+
+let currentPeerId = null;
+let mySignKeyPair;
+
+// 🔥 LOCAL STATE CACHE (IMPORTANT FIX)
+const userStore = new Map();
+
+const config = {
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+};
+
+// ---------------- UI ----------------
+
+function log(msg) {
+  document.getElementById("chat").innerHTML += `<div>${msg}</div>`;
+}
+
+// ---------------- CRYPTO ----------------
+
+async function generateIdentity() {
+  // 🔐 Encryption key (ECDH)
+  myKeyPair = await crypto.subtle.generateKey(
+    { name: "ECDH", namedCurve: "P-256" },
+    true,
+    ["deriveKey"]
+  );
+
+  // ✍️ Signing key (ECDSA)
+  mySignKeyPair = await crypto.subtle.generateKey(
+    {
+      name: "ECDSA",
+      namedCurve: "P-256"
+    },
+    true,
+    ["sign", "verify"]
+  );
+
+  const pubECDH = await crypto.subtle.exportKey("jwk", myKeyPair.publicKey);
+  const pubSign = await crypto.subtle.exportKey("jwk", mySignKeyPair.publicKey);
+
+  ws.send(JSON.stringify({
+    type: "pubkey",
+    id: myId,
+    key: {
+      ecdh: pubECDH,
+      sign: pubSign
+    }
+  }));
+}
+
+async function deriveKey(peerJwk) {
+  const peerKey = await crypto.subtle.importKey(
+    "jwk",
+    peerJwk,
+    { name: "ECDH", namedCurve: "P-256" },
+    true,
+    []
+  );
+
+  return crypto.subtle.deriveKey(
+    { name: "ECDH", public: peerKey },
+    myKeyPair.privateKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encrypt(msg) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder().encode(msg);
+
+  const cipher = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    sharedKey,
+    enc
+  );
+
+  return {
+    iv: Array.from(iv),
+    data: Array.from(new Uint8Array(cipher))
+  };
+}
+
+async function decrypt(payload) {
+  const iv = new Uint8Array(payload.iv);
+  const data = new Uint8Array(payload.data);
+
+  const plain = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    sharedKey,
+    data
+  );
+
+  return new TextDecoder().decode(plain);
+}
+
+// ---------------- CONNECTION ----------------
+
+function connect() {
+  myId = document.getElementById("name").value;
+
+  ws = new WebSocket("ws://localhost:8080");
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: "join", id: myId }));
+    generateIdentity();
+  };
+
+  ws.onmessage = async (e) => {
+    const msg = JSON.parse(e.data);
+
+    if (msg.type === "users") {
+      updateUsers(msg.users);
+    }
+
+    if (msg.type === "signal") {
+      await handleSignal(msg);
+    }
+  };
+}
+
+async function sign(data) {
+  const encoded = new TextEncoder().encode(data);
+
+  const sig = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    mySignKeyPair.privateKey,
+    encoded
+  );
+
+  return Array.from(new Uint8Array(sig));
+}
+
+async function verify(signature, data, peerSignPubKey) {
+  const key = await crypto.subtle.importKey(
+    "jwk",
+    peerSignPubKey,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["verify"]
+  );
+
+  return crypto.subtle.verify(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    new Uint8Array(signature),
+    new TextEncoder().encode(data)
+  );
+}
+
+// ---------------- USERS ----------------
+
+function updateUsers(users) {
+  userStore.clear();
+
+  for (const u of users) {
+    if (u.ready && u.pubkey?.ecdh && u.pubkey?.sign) {
+      userStore.set(u.id, u);
+    }
+  }
+
+  renderUsers([...userStore.values()].filter(u => u.id !== myId));
+}
+
+function renderUsers(users) {
+  const div = document.getElementById("users");
+  div.innerHTML = "";
+
+  users.forEach(u => {
+    const btn = document.createElement("button");
+
+    const ready =
+      u?.pubkey?.ecdh &&
+      u?.pubkey?.sign;
+
+    btn.innerText = ready
+      ? `Chat with ${u.id}`
+      : `⏳ Waiting for ${u.id}`;
+
+    btn.disabled = !ready;
+
+    btn.onclick = () => {
+      if (!ready) return;
+      startChat(u);
+    };
+
+    div.appendChild(btn);
+  });
+}
+
+function getUser(id) {
+  return userStore.get(id);
+}
+
+// ---------------- WEBRTC ----------------
+
+async function startChat(user) {
+  if (!user?.pubkey?.ecdh || !user?.pubkey?.sign) {
+    log("❌ Peer not fully ready (missing keys)");
+    return;
+  }
+
+  sharedKey = await deriveKey(user.pubkey.ecdh);
+
+  currentPeerId = user.id;
+
+  pc = new RTCPeerConnection(config);
+
+  dc = pc.createDataChannel("chat");
+  setupDC();
+
+  pc.onicecandidate = e => {
+    if (!e.candidate) {
+      sendSignal(user.id, pc.localDescription);
+    }
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+}
+
+function setupDC() {
+  dc.onopen = () => log("🔐 Secure connection established");
+
+  dc.onmessage = async (e) => {
+  try {
+    const msg = JSON.parse(e.data);
+
+    const peer = getUser(currentPeerId);
+
+    if (!peer?.pubkey?.sign) {
+      log("❌ Missing signing key (peer not ready or wrong peer ID)");
+      return;
+    }
+
+    // ✍️ verify signature first
+    const ok = await verify(
+      msg.signature,
+      JSON.stringify(msg.encrypted),
+      peer.pubkey.sign
+    );
+
+    if (!ok) {
+      log("❌ Signature invalid (tampered message)");
+      return;
+    }
+
+    // 🔓 decrypt only if valid
+    const plaintext = await decrypt(msg.encrypted);
+
+    log("Peer: " + plaintext);
+
+  } catch (err) {
+    log("❌ Message error");
+  }
+};
+}
+
+// ---------------- SIGNALING ----------------
+
+async function handleSignal(msg) {
+
+  currentPeerId = msg.from;
+  
+  if (!pc) {
+    pc = new RTCPeerConnection(config);
+
+    pc.ondatachannel = e => {
+      dc = e.channel;
+      setupDC();
+    };
+
+    pc.onicecandidate = e => {
+      if (!e.candidate) {
+        sendSignal(msg.from, pc.localDescription);
+      }
+    };
+  }
+
+  await pc.setRemoteDescription(msg.data);
+
+  if (msg.data.type === "offer") {
+    const peer = getUser(msg.from);
+
+    if (!peer?.pubkey?.ecdh || !peer?.pubkey?.sign) {
+      log("❌ Peer not fully ready for handshake");
+      return;
+    }
+
+    sharedKey = await deriveKey(peer.pubkey.ecdh);
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+  }
+}
+
+function sendSignal(to, data) {
+  ws.send(JSON.stringify({
+    type: "signal",
+    to,
+    data
+  }));
+}
+
+// ---------------- SEND MESSAGE ----------------
+
+async function sendMessage() {
+  const text = document.getElementById("msg").value;
+
+  if (!sharedKey) {
+    log("⚠️ Not securely connected yet");
+    return;
+  }
+
+  // 🔐 encrypt
+  const encrypted = await encrypt(text);
+
+  // ✍️ sign ciphertext (important!)
+  const signature = await sign(JSON.stringify(encrypted));
+
+  dc.send(JSON.stringify({
+    encrypted,
+    signature
+  }));
+
+  log("You: " + text);
+
+  document.getElementById("msg").value = "";
+}
+</script>
+
+</body>
+</html>
