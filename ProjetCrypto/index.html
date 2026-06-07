@@ -41,6 +41,7 @@ let mySignKeyPair;
 
 // 🔥 LOCAL STATE CACHE (IMPORTANT FIX)
 const userStore = new Map();
+const trustedFingerprints = new Set();
 
 const config = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
@@ -74,6 +75,12 @@ async function generateIdentity() {
 
   const pubECDH = await crypto.subtle.exportKey("jwk", myKeyPair.publicKey);
   const pubSign = await crypto.subtle.exportKey("jwk", mySignKeyPair.publicKey);
+
+  const myFingerprint = await getFingerprint(pubSign);
+  log(
+    "🔑 My Fingerprint:<br>" +
+    myFingerprint
+  );
 
   ws.send(JSON.stringify({
     type: "pubkey",
@@ -130,6 +137,38 @@ async function decrypt(payload) {
   );
 
   return new TextDecoder().decode(plain);
+}
+
+async function getFingerprint(publicJwk) {
+
+  const key = await crypto.subtle.importKey(
+    "jwk",
+    publicJwk,
+    {
+      name: "ECDSA",
+      namedCurve: "P-256"
+    },
+    true,
+    ["verify"]
+  );
+
+  const raw = await crypto.subtle.exportKey(
+    "raw",
+    key
+  );
+
+  const hash = await crypto.subtle.digest(
+    "SHA-256",
+    raw
+  );
+
+  const bytes = new Uint8Array(hash);
+
+  return Array.from(bytes)
+    .slice(0, 16)
+    .map(x => x.toString(16).padStart(2, "0"))
+    .join(":")
+    .toUpperCase();
 }
 
 // ---------------- CONNECTION ----------------
@@ -217,6 +256,16 @@ function renderUsers(users) {
 
     btn.disabled = !ready;
 
+    if (u.pubkey?.sign) {
+          getFingerprint(u.pubkey.sign)
+            .then(fp => {
+
+              btn.innerText =
+                `Chat with ${u.id}
+          ${fp}`;
+        });
+    }
+
     btn.onclick = () => {
       if (!ready) return;
       startChat(u);
@@ -236,6 +285,25 @@ async function startChat(user) {
   if (!user?.pubkey?.ecdh || !user?.pubkey?.sign) {
     log("❌ Peer not fully ready (missing keys)");
     return;
+  }
+
+  const fp = await getFingerprint(
+    user.pubkey.sign
+  );
+
+  // First time seeing this fingerprint
+  if (!trustedFingerprints.has(fp)) {
+
+    const trust = confirm(
+      `Verify ${user.id}'s fingerprint:\n\n${fp}`
+    );
+
+    if (!trust) {
+      log("⚠️ User not verified");
+      return;
+    }
+
+    trustedFingerprints.add(fp);
   }
 
   sharedKey = await deriveKey(user.pubkey.ecdh);
