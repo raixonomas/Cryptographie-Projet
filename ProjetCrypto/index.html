@@ -286,7 +286,7 @@ function setupDC() {
     // 🔓 decrypt only if valid
     const plaintext = await decrypt(msg.encrypted);
 
-    log("Peer: " + plaintext);
+    log(userStore.get(currentPeerId)?.id + ": " + plaintext);
 
   } catch (err) {
     log("❌ Message error");
