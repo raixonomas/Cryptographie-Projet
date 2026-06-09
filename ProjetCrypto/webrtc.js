@@ -63,6 +63,7 @@ function setupDC() {
       return;
     }
 
+    console.log("Decrypt payload :", payload, currentPeerId, session);
     try {
       const plainText = await session.decrypt(payload);
       log(`<b>${currentPeerId}</b>: ${plainText}`);
