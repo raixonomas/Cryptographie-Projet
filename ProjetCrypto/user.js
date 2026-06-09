@@ -1,15 +1,14 @@
 const userStore = new Map();
 const trustedFingerprints = new Set();
+window.trustedFingerprints = trustedFingerprints;
 
 function updateUsers(users) {
   userStore.clear();
-
   for (const u of users) {
-    if (u.ready && u.pubkey?.ecdh && u.pubkey?.sign) {
+    if (u.ready) {
       userStore.set(u.id, u);
     }
   }
-
   renderUsers([...userStore.values()].filter(u => u.id !== myId));
 }
 
@@ -23,21 +22,12 @@ async function renderUsers(users) {
 
   for (const u of users) {
     const btn = document.createElement("button");
-
-    const ready = u?.pubkey?.ecdh && u?.pubkey?.sign;
-
-    btn.disabled = !ready;
-    btn.innerText = ready ? `Chat with ${u.id}` : `⏳ Waiting for ${u.id}`;
-
-    if (u.pubkey?.sign) {
-      const fp = await getFingerprint(u.pubkey.sign);
-      btn.innerText = `Chat with ${u.id}\n${fp}`;
-    }
-
+    btn.innerText = `Establish E2EE Channel with ${u.id}`;
+    
     btn.onclick = () => {
-      if (ready) startChat(u);
+      // Step 1: Request X3DH bundle from server
+      requestUserBundle(u.id);
     };
-
     div.appendChild(btn);
   }
 }

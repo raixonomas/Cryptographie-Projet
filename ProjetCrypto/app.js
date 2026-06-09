@@ -1,5 +1,7 @@
 function log(msg) {
-  document.getElementById("chat").innerHTML += `<div>${msg}</div>`;
+  const chatDiv = document.getElementById("chat");
+  if (chatDiv) {
+    chatDiv.innerHTML += `<div>${msg}</div>`;
+  }
 }
-
 window.log = log;

@@ -3,7 +3,6 @@ let myId;
 
 function connect() {
   myId = document.getElementById("name").value;
-
   ws = new WebSocket("ws://localhost:8080");
 
   ws.onopen = () => {
@@ -18,6 +17,10 @@ function connect() {
       updateUsers(msg.users);
     }
 
+    if (msg.type === "bundle_response") {
+      await handleBundleResponse(msg);
+    }
+
     if (msg.type === "signal") {
       await handleSignal(msg);
     }
@@ -25,9 +28,9 @@ function connect() {
 }
 
 function sendSignal(to, data) {
-  ws.send(JSON.stringify({
-    type: "signal",
-    to,
-    data
-  }));
+  ws.send(JSON.stringify({ type: "signal", to, data }));
+}
+
+function requestUserBundle(targetId) {
+  ws.send(JSON.stringify({ type: "get_bundle", targetId }));
 }
