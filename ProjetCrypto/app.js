@@ -1,15 +1,64 @@
-var button = document.getElementById("testbtn");
+const discussions = new Map();
+let activeDiscussionId = null;
 
-button.onclick = () => {
-      createDiscussionItem("Rocketax", "12:58", "Hey you, you're finally awake.");
-    };
+function formatTime(date = new Date()) {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
+function ensureDiscussion(peerId) {
+  if (!discussions.has(peerId)) {
+    const li = createDiscussionItem(peerId, formatTime(), "Secure discussion ready");
+    discussions.set(peerId, { peerId, messages: [], element: li });
+  }
+
+  return discussions.get(peerId);
+}
+
+function selectDiscussion(peerId) {
+  ensureDiscussion(peerId);
+  activeDiscussionId = peerId;
+  currentPeerId = peerId;
+
+  const activeItems = document.querySelectorAll(".discussion");
+  activeItems.forEach((item) => item.classList.toggle("active", item.dataset.peerId === peerId));
+
+  renderConversation(peerId);
+}
+
+function renderConversation(peerId) {
+  const conversation = ensureDiscussion(peerId);
+  const chatDiv = document.getElementById("chat");
+
+  if (!chatDiv) return;
+
+  chatDiv.innerHTML = "";
+  conversation.messages.forEach((entry) => {
+    chatDiv.innerHTML += `<div>${entry.sender === "You" ? "<b>You</b>" : `<b>${entry.sender}</b>`}: ${entry.text}</div>`;
+  });
+}
+
+function appendMessage(peerId, sender, text) {
+  const conversation = ensureDiscussion(peerId);
+  conversation.messages.push({ sender, text, time: formatTime() });
+
+  if (conversation.element) {
+    conversation.element.querySelector(".disc-nom").textContent = peerId;
+    conversation.element.querySelector(".disc-heure").textContent = conversation.messages[conversation.messages.length - 1].time;
+    conversation.element.querySelector(".disc-preview").textContent = text;
+  }
+
+  if (activeDiscussionId === peerId) {
+    renderConversation(peerId);
+  }
+}
 
 function createDiscussionItem(name, date, message) {
   const liste = document.getElementById("disc-list");
 
   const li = document.createElement("li");
   li.classList.add("discussion");
+  li.dataset.peerId = name;
+  li.onclick = () => selectDiscussion(name);
 
   li.innerHTML = `
     <div class="disc-details">
@@ -28,6 +77,7 @@ function createDiscussionItem(name, date, message) {
   li.querySelector(".disc-preview").textContent = message;
 
   liste.appendChild(li);
+  return li;
 }
 
 function log(msg) {

@@ -2,13 +2,38 @@ let pc;
 let dc;
 let currentPeerId;
 
+const peerConnections = new Map();
+const dataChannels = new Map();
+
 const config = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+function getPeerConnection(peerId) {
+  return peerConnections.get(peerId) || null;
+}
+
+function setPeerConnection(peerId, connection) {
+  peerConnections.set(peerId, connection);
+  pc = connection;
+  return connection;
+}
+
+function getDataChannel(peerId) {
+  return dataChannels.get(peerId) || null;
+}
+
+function setDataChannel(peerId, channel) {
+  dataChannels.set(peerId, channel);
+  dc = channel;
+  return channel;
+}
 
 /**
  * Initiator (Alice) requests the server bundle and starts WebRTC setup
  */
 async function handleBundleResponse(msg) {
   currentPeerId = msg.targetId;
+  ensureDiscussion(currentPeerId);
+  selectDiscussion(currentPeerId);
 
   const fp = await getFingerprint(msg.ik);
   if (!trustedFingerprints.has(fp)) {
@@ -24,11 +49,13 @@ async function handleBundleResponse(msg) {
   const x3dhHeader = await initiateX3DHSession(currentPeerId, msg);
 
   // 2. Setup standard WebRTC Peer Connection
-  pc = new RTCPeerConnection(config);
+  pc = getPeerConnection(currentPeerId) || new RTCPeerConnection(config);
+  setPeerConnection(currentPeerId, pc);
   
   // 3. Immediately open the data channel
-  dc = pc.createDataChannel("chat");
-  setupDC();
+  dc = getDataChannel(currentPeerId) || pc.createDataChannel("chat");
+  setDataChannel(currentPeerId, dc);
+  setupDC(currentPeerId, dc);
 
   pc.onicecandidate = e => {
     if (!e.candidate) {
@@ -50,33 +77,33 @@ async function handleBundleResponse(msg) {
 /**
  * Attaches event listeners to the data channel cleanly
  */
-function setupDC() {
-  if (!dc) return;
+function setupDC(peerId = currentPeerId, channel = dc) {
+  if (!channel) return;
 
-  dc.onopen = () => {
+  channel.onopen = () => {
     log("🔐 End-to-End Encrypted Double Ratchet Connection Active!");
   };
 
-  dc.onmessage = async (e) => {
+  channel.onmessage = async (e) => {
     const payload = JSON.parse(e.data);
-    const session = activeRatchetSessions.get(currentPeerId);
+    const session = activeRatchetSessions.get(peerId);
 
     if (!session) {
-      log(`⚠️ Received a message but no active cryptographic session found for ${currentPeerId}`);
+      log(`⚠️ Received a message but no active cryptographic session found for ${peerId}`);
       return;
     }
 
-    console.log("Decrypt payload :", payload, currentPeerId, session);
+    console.log("Decrypt payload :", payload, peerId, session);
     try {
       const plainText = await session.decrypt(payload);
-      log(`<b>${currentPeerId}</b>: ${plainText}`);
+      appendMessage(peerId, peerId, plainText);
     } catch(err) {
       log("❌ Failed to decrypt inbound packet. Bad Ratchet Synchronicity.");
       console.error(err);
     }
   };
-  
-  dc.onerror = (err) => console.error("Data Channel Error:", err);
+
+  channel.onerror = (err) => console.error("Data Channel Error:", err);
 }
 
 /**
@@ -84,7 +111,17 @@ function setupDC() {
  */
 async function handleSignal(msg) {
   const signalingPeer = msg.from;
-  console.log(`📡 [WebRTC Signaling] Signal received from: ${signalingPeer}. Current PC State: ${pc ? pc.signalingState : 'null'}`);
+  currentPeerId = signalingPeer;
+  ensureDiscussion(signalingPeer);
+  selectDiscussion(signalingPeer);
+
+  let peerConnection = getPeerConnection(signalingPeer);
+  if (!peerConnection) {
+    peerConnection = new RTCPeerConnection(config);
+    setPeerConnection(signalingPeer, peerConnection);
+  }
+
+  console.log(`📡 [WebRTC Signaling] Signal received from: ${signalingPeer}. Current PC State: ${peerConnection ? peerConnection.signalingState : 'null'}`);
 
   if (!msg.data) return;
 
@@ -107,36 +144,39 @@ async function handleSignal(msg) {
   }
 
   // 🔥 STATE GUARDRAIL: Avoid modifying remote answers if our signaling engine is stable
-  if (sdpInit.type === "answer" && pc && pc.signalingState === "stable") {
+  if (sdpInit.type === "answer" && peerConnection && peerConnection.signalingState === "stable") {
     console.warn("⚠️ [WebRTC State Guard] Connection already stable. Ignoring duplicate remote answer.");
     return;
   }
 
   // IF we are the Receiver (Bob), initialize our PeerConnection context BEFORE applying descriptions
-  if (!pc) {
-    currentPeerId = signalingPeer;
-    pc = new RTCPeerConnection(config);
-    
-    pc.ondatachannel = e => {
-      dc = e.channel;
-      setupDC();
-    };
+  if (!peerConnection) {
+    peerConnection = new RTCPeerConnection(config);
+    setPeerConnection(signalingPeer, peerConnection);
+  }
 
-    pc.onicecandidate = e => {
-      if (!e.candidate) {
-        console.log("🚀 [ICE Receiver] ICE gathering complete. Dispatching single answer back.");
-        sendSignal(signalingPeer, {
-          type: pc.localDescription.type,
-          sdp: pc.localDescription.sdp
-        });
-      }
+  if (!getDataChannel(signalingPeer)) {
+    peerConnection.ondatachannel = e => {
+      const channel = e.channel;
+      setDataChannel(signalingPeer, channel);
+      setupDC(signalingPeer, channel);
     };
   }
+
+  peerConnection.onicecandidate = e => {
+    if (!e.candidate) {
+      console.log("🚀 [ICE Receiver] ICE gathering complete. Dispatching single answer back.");
+      sendSignal(signalingPeer, {
+        type: peerConnection.localDescription.type,
+        sdp: peerConnection.localDescription.sdp
+      });
+    }
+  };
 
   // Apply remote description safely
   try {
     console.log(`🔄 [WebRTC State] Applying remote description (${sdpInit.type})...`);
-    await pc.setRemoteDescription(new RTCSessionDescription({
+    await peerConnection.setRemoteDescription(new RTCSessionDescription({
       type: sdpInit.type,
       sdp: sdpInit.sdp
     }));
@@ -148,16 +188,14 @@ async function handleSignal(msg) {
   // Generate matching answer ONLY after setRemoteDescription successfully resolves
   if (sdpInit.type === "offer") {
     console.log("🔄 [WebRTC State] Compiling matching operational answer...");
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    
-    // If ICE gathering happened to complete instantaneously, send immediately.
-    // Otherwise, we rely safely on pc.onicecandidate to prevent duplicate signaling packets.
-    if (pc.iceGatheringState === "complete") {
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+
+    if (peerConnection.iceGatheringState === "complete") {
       console.log("🚀 [ICE Instant Match] Sending completed answer profile.");
       sendSignal(signalingPeer, {
-        type: pc.localDescription.type,
-        sdp: pc.localDescription.sdp
+        type: peerConnection.localDescription.type,
+        sdp: peerConnection.localDescription.sdp
       });
     }
   }
@@ -171,14 +209,17 @@ async function sendMessage() {
   const text = textInput.value;
   if (!text.trim()) return;
   
-  const session = activeRatchetSessions.get(currentPeerId);
-  if (!session || !dc || dc.readyState !== "open") {
+  const peerId = currentPeerId || activeDiscussionId;
+  const session = activeRatchetSessions.get(peerId);
+  const channel = getDataChannel(peerId) || dc;
+
+  if (!session || !channel || channel.readyState !== "open") {
     return log("⚠️ Secure channel uninitialized or connection closing.");
   }
 
   const payload = await session.encrypt(text);
-  
-  dc.send(JSON.stringify(payload));
-  log(`<b>You</b>: ${text}`);
+
+  channel.send(JSON.stringify(payload));
+  appendMessage(peerId, "You", text);
   textInput.value = "";
 }
