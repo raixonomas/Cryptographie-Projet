@@ -108,21 +108,22 @@ async function generateIdentity() {
 async function initiateX3DHSession(peerId, bundle) {
   console.log(`📡 [X3DH Initiator] Starting X3DH Key Agreement with peer: ${peerId}`);
   const ekA = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+  const selectedOpk = Array.isArray(bundle.opk) ? bundle.opk[0] : bundle.opk;
 
   const dh1 = await computeDH(myIdentityKey.privateKey, bundle.spk);
   const dh2 = await computeDH(ekA.privateKey, bundle.ik);
   const dh3 = await computeDH(ekA.privateKey, bundle.spk);
 
   let combinedSize = 96;
-  if (bundle.opk) combinedSize += 32;
+  if (selectedOpk) combinedSize += 32;
   
   const combinedSecret = new Uint8Array(combinedSize);
   combinedSecret.set(new Uint8Array(dh1), 0);
   combinedSecret.set(new Uint8Array(dh2), 32);
   combinedSecret.set(new Uint8Array(dh3), 64);
 
-  if (bundle.opk) {
-    const dh4 = await computeDH(ekA.privateKey, bundle.opk);
+  if (selectedOpk) {
+    const dh4 = await computeDH(ekA.privateKey, selectedOpk);
     combinedSecret.set(new Uint8Array(dh4), 96);
   }
 
@@ -135,7 +136,7 @@ async function initiateX3DHSession(peerId, bundle) {
   const session = new RatchetSession(masterKey, true, bundle.spk, ekA);
   activeRatchetSessions.set(peerId, session);
 
-  return { ekA: ekAJwk, ikA: ikAJwk, usedOpk: bundle.opk };
+  return { ekA: ekAJwk, ikA: ikAJwk, usedOpk: selectedOpk };
 }
 
 /**
@@ -144,20 +145,22 @@ async function initiateX3DHSession(peerId, bundle) {
 async function receiveX3DHSession(peerId, x3dhHeader) {
   console.log(`📥 [X3DH Receiver] Processing inbound X3DH offer from: ${peerId}`);
 
+  const selectedOpk = Array.isArray(x3dhHeader.usedOpk) ? x3dhHeader.usedOpk[0] : x3dhHeader.usedOpk;
+
   const dh1 = await computeDH(mySignedPreKey.privateKey, x3dhHeader.ikA);
   const dh2 = await computeDH(myIdentityKey.privateKey, x3dhHeader.ekA);
   const dh3 = await computeDH(mySignedPreKey.privateKey, x3dhHeader.ekA);
 
   let combinedSize = 96;
-  if (x3dhHeader.usedOpk) combinedSize += 32;
+  if (selectedOpk) combinedSize += 32;
 
   const combinedSecret = new Uint8Array(combinedSize);
   combinedSecret.set(new Uint8Array(dh1), 0);
   combinedSecret.set(new Uint8Array(dh2), 32);
   combinedSecret.set(new Uint8Array(dh3), 64);
 
-  if (x3dhHeader.usedOpk) {
-    let localOpkKeyPair = myOneTimePreKeys.find(k => k.kid === x3dhHeader.usedOpk.kid) || myOneTimePreKeys[0]; 
+  if (selectedOpk) {
+    const localOpkKeyPair = myOneTimePreKeys.find(k => k.kid === selectedOpk.kid) || myOneTimePreKeys[0];
     const dh4 = await computeDH(localOpkKeyPair.privateKey, x3dhHeader.ekA);
     combinedSecret.set(new Uint8Array(dh4), 96);
   }
@@ -226,6 +229,11 @@ class RatchetSession {
 
   async encrypt(plaintext) {
     console.log(`🔒 [Encrypt Action] Encrypting payload: "${plaintext}"`);
+
+    // Once a session sends its first packet, it is no longer in the special
+    // message-0 alignment phase. This is critical for Bob's session, because
+    // Bob sends first and then receives Alice's reply later.
+    this.isFirstMessage = false;
 
     // Fix: If Bob (or Alice later) does not have an active sending chain initialized, 
     // generate the local keypair and execute a DH step to securely advance the root sequence.
