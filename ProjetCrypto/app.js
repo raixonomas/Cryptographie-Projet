@@ -137,5 +137,18 @@ function showConfirmDialog(title, message) {
   });
 }
 
+function bindChatInput() {
+  const messageInput = document.getElementById("msg");
+  if (!messageInput) return;
+
+  messageInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      sendMessage();
+    }
+  });
+}
+
+window.addEventListener("DOMContentLoaded", bindChatInput);
 window.log = log;
 window.showConfirmDialog = showConfirmDialog;
