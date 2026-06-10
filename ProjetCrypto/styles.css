@@ -57,6 +57,61 @@ h2 {
   padding: 10px;
 }
 
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.dialog-overlay.show {
+  display: flex;
+}
+
+.dialog-card {
+  width: min(420px, calc(100vw - 24px));
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.25);
+  padding: 18px;
+}
+
+.dialog-card h3 {
+  margin: 0 0 10px;
+}
+
+.dialog-card p {
+  margin: 0 0 16px;
+  line-height: 1.4;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.dialog-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.dialog-btn-primary {
+  background: #0a84ff;
+  color: #fff;
+}
+
+.dialog-btn-secondary {
+  background: #e5e7eb;
+  color: #111827;
+}
+
 input {
   width: 100%;
   margin: 5px 0;

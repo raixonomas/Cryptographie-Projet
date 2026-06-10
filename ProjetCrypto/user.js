@@ -22,11 +22,10 @@ async function renderUsers(users) {
 
   for (const u of users) {
     const btn = document.createElement("button");
-    btn.innerText = `Establish E2EE Channel with ${u.id}`;
-    
+    btn.innerText = `Ask ${u.id} to start a secure chat`;
+
     btn.onclick = () => {
-      // Step 1: Request X3DH bundle from server
-      requestUserBundle(u.id);
+      requestConnection(u.id);
     };
     div.appendChild(btn);
   }

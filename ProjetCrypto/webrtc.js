@@ -12,7 +12,10 @@ async function handleBundleResponse(msg) {
 
   const fp = await getFingerprint(msg.ik);
   if (!trustedFingerprints.has(fp)) {
-    const trust = confirm(`Verify identity key fingerprint for ${currentPeerId}:\n\n${fp}`);
+    const trust = await window.showConfirmDialog(
+      `Verify identity for ${currentPeerId}`,
+      `Verify identity key fingerprint for ${currentPeerId}:\n\n${fp}`
+    );
     if (!trust) return;
     trustedFingerprints.add(fp);
   }

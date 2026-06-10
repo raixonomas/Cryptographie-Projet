@@ -18,6 +18,17 @@
     <div id="users"></div>
     <hr>
   </div>
+  <div id="dialog-overlay" class="dialog-overlay" aria-hidden="true">
+    <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+      <h3 id="dialog-title">Confirmation</h3>
+      <p id="dialog-message"></p>
+      <div class="dialog-actions">
+        <button id="dialog-decline" class="dialog-btn dialog-btn-secondary">No</button>
+        <button id="dialog-accept" class="dialog-btn dialog-btn-primary">Yes</button>
+      </div>
+    </div>
+  </div>
+
   <div class="main-container">
     <div class="disc-list-container">
       <h2>Discussions</h2>

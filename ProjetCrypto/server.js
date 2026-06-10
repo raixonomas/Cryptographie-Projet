@@ -58,6 +58,35 @@ wss.on("connection", (ws) => {
           }));
         }
       }
+
+      if (data.type === "connectionRequest") {
+        const { initiatorID, targetID } = data;
+        const target = users.get(targetID);
+        if (target) {
+          target.ws.send(JSON.stringify({
+            type: "connectionRequest",
+            initiatorID
+          }));
+        }
+      }
+
+      if (data.type === "connectionResponse") {
+        const target = users.get(data.initiatorID);
+        if (!target) return;
+
+        if (data.accepted) {
+          target.ws.send(JSON.stringify({
+            type: "connectionAccepted",
+            from: userId
+          }));
+        } else {
+          target.ws.send(JSON.stringify({
+            type: "connectionDeclined",
+            from: userId
+          }));
+        }
+      }
+
     } catch (e) {
       console.error("Error processing message:", e);
     }
