@@ -1,8 +1,48 @@
 body {
   font-family: sans-serif;
-  max-width: 900px;
-  margin: auto;
+  max-width: 1920px;
+  margin: 0, 15%;
   padding: 20px;
+}
+
+h2 {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.container {
+  display: grid;
+  justify-content: center; /* Centre horizontalement */
+  align-items: center;  
+  text-align: center; 
+}
+
+.main-container {
+  display: flex;
+  
+}
+
+.disc-list-container {
+  width: 20%;
+}
+
+.disc-list {
+  max-width: 350px;
+  list-style: none;
+  padding: 5px;
+  margin: 0;
+  border-right: 1px solid #e0e0e0;
+}
+
+.chat {
+  width: 70%;
+}
+
+#connect-btn {
+  width: 50%;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 #users button {
@@ -20,4 +60,59 @@ body {
 input {
   width: 100%;
   margin: 5px 0;
+}
+
+.discussion {
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.discussion:hover {
+  background-color: #f0f2f5;
+}
+.discussion.active {
+  background-color: #e7f3ff;
+}
+
+.disc-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.disc-ligne-haute {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.disc-nom {
+  font-weight: 600;
+  color: #050505;
+  font-size: 0.95rem;
+}
+
+.disc-heure {
+  font-size: 0.8rem;
+  color: #65676b;
+}
+
+/* aperçu du message */
+.disc-preview {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #65676b;
+  
+  /* coupe le texte trop long sur une seule ligne avec "..." */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis; 
+}
+
+/* Si la conversation a un message non lu (optionnel) */
+.discussion.non-lu .disc-preview {
+  font-weight: 600;
+  color: #050505;
 }
