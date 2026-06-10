@@ -1,7 +1,6 @@
 const WebSocket = require("ws");
 const wss = new WebSocket.Server({ port: 8080 });
 
-// id -> { ws, bundle: { ik, spk, opk: [] } }
 const users = new Map(); 
 
 function broadcastUsers() {
@@ -97,5 +96,3 @@ wss.on("connection", (ws) => {
     broadcastUsers();
   });
 });
-
-console.log("🚀 Secure X3DH Server running on ws://localhost:8080");

@@ -1,10 +1,6 @@
-// Global cryptographic state for the logged-in user
 let myIdentityKey, mySignedPreKey, myOneTimePreKeys = [];
-let activeRatchetSessions = new Map(); // peerId -> RatchetSession instance
+let activeRatchetSessions = new Map();
 
-/**
- * Helper: Simple SHA-256 Fingerprint generation
- */
 async function getFingerprint(jwk) {
   const json = JSON.stringify(jwk);
   const buffer = new TextEncoder().encode(json);
@@ -14,9 +10,6 @@ async function getFingerprint(jwk) {
     .join(':');
 }
 
-/**
- * Helper: Robust HKDF extraction layer built on top of SubtleCrypto HMAC
- */
 async function hkdf(secretBits, saltBits, infoString) {
   const enc = new TextEncoder();
   const infoBuffer = enc.encode(infoString);
@@ -27,7 +20,7 @@ async function hkdf(secretBits, saltBits, infoString) {
   const saltKey = await crypto.subtle.importKey(
     "raw",
     saltBytes,
-    { name: "HMAC", hash: "SHA-256" }, // ✅ Fixed escaped quotes syntax error
+    { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"]
   );
@@ -36,7 +29,7 @@ async function hkdf(secretBits, saltBits, infoString) {
   const prkKey = await crypto.subtle.importKey(
     "raw",
     prkBuffer,
-    { name: "HMAC", hash: "SHA-256" }, // ✅ Fixed escaped quotes syntax error
+    { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"]
   );
@@ -49,9 +42,6 @@ async function hkdf(secretBits, saltBits, infoString) {
   return finalOutputBuffer; 
 }
 
-/**
- * Helper: Computes a raw shared secret using ECDH deriveBits
- */
 async function computeDH(privateKeyObject, publicJwk) {
   const publicKeyObject = await crypto.subtle.importKey(
     "jwk",
@@ -69,11 +59,7 @@ async function computeDH(privateKeyObject, publicJwk) {
   return bits; 
 }
 
-/**
- * Generates X3DH Public Key Bundle
- */
 async function generateIdentity() {
-  console.log("⚙️ [X3DH Setup] Starting key generation sequence...");
   myIdentityKey = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
   mySignedPreKey = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
   
@@ -102,11 +88,7 @@ async function generateIdentity() {
   }));
 }
 
-/**
- * Alice (Initiator) computes X3DH Master Secret
- */
 async function initiateX3DHSession(peerId, bundle) {
-  console.log(`📡 [X3DH Initiator] Starting X3DH Key Agreement with peer: ${peerId}`);
   const ekA = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
   const selectedOpk = Array.isArray(bundle.opk) ? bundle.opk[0] : bundle.opk;
 
@@ -132,19 +114,13 @@ async function initiateX3DHSession(peerId, bundle) {
   const ekAJwk = await crypto.subtle.exportKey("jwk", ekA.publicKey);
   const ikAJwk = await crypto.subtle.exportKey("jwk", myIdentityKey.publicKey);
 
-  // ✅ Fixed constructor argument positioning: remote public JWK goes third, local KeyPair goes fourth
   const session = new RatchetSession(masterKey, true, bundle.spk, ekA);
   activeRatchetSessions.set(peerId, session);
 
   return { ekA: ekAJwk, ikA: ikAJwk, usedOpk: selectedOpk };
 }
 
-/**
- * Bob (Receiver) replicates X3DH Master Secret
- */
 async function receiveX3DHSession(peerId, x3dhHeader) {
-  console.log(`📥 [X3DH Receiver] Processing inbound X3DH offer from: ${peerId}`);
-
   const selectedOpk = Array.isArray(x3dhHeader.usedOpk) ? x3dhHeader.usedOpk[0] : x3dhHeader.usedOpk;
 
   const dh1 = await computeDH(mySignedPreKey.privateKey, x3dhHeader.ikA);
@@ -189,14 +165,9 @@ class RatchetSession {
       this.sendingChainKey = null;
       this.receivingChainKey = initialChainKey;
     }
-
-    console.log(`🏁 [Ratchet Constructor] State isolated. Role: ${isInitiator ? 'Initiator' : 'Receiver'}`);
   }
 
   async stepSymmetric(chainKeyBuffer) {
-    // Use one derivation label for both directions. Using different labels here
-    // makes the sender and receiver derive different message keys from the same
-    // chain state, which is exactly what triggers the "Bad Ratchet Synchronicity" error.
     const derived = await hkdf(chainKeyBuffer, new Uint8Array(0), "Symmetric_Ratchet_Step");
     
     const nextChainKey = derived.slice(0, 16);
@@ -204,23 +175,16 @@ class RatchetSession {
     return [nextChainKey, msgKeyBits];
   }
 
-  /**
-   * Drives asymmetric ratchet forward when a new remote ephemeral key arrives
-   */
   async performAsymmetricRatchet(remoteDhJwk) {
-    console.log("🔄 [Asymmetric Ratchet Turn] Advancing structural key layer...");
     this.remoteDhJwk = remoteDhJwk;
 
-    // 1. Terminate current receive chain using our existing local key pair against their new key
     const dhBitsReceive = await computeDH(this.localDhKey.privateKey, this.remoteDhJwk);
     const rootOutputReceive = await hkdf(dhBitsReceive, new Uint8Array(this.rootKey), "DH_Ratchet_Step");
     this.rootKey = rootOutputReceive.slice(0, 16);
     this.receivingChainKey = rootOutputReceive.slice(16, 32);
 
-    // 2. Generate a new local ephemeral key pair to step our send sequence forward
     this.localDhKey = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
     
-    // 3. Advance root key to build a clean sending chain base
     const dhBitsSend = await computeDH(this.localDhKey.privateKey, this.remoteDhJwk);
     const rootOutputSend = await hkdf(dhBitsSend, new Uint8Array(this.rootKey), "DH_Ratchet_Step");
     this.rootKey = rootOutputSend.slice(0, 16);
@@ -228,15 +192,8 @@ class RatchetSession {
   }
 
   async encrypt(plaintext) {
-    console.log(`🔒 [Encrypt Action] Encrypting payload: "${plaintext}"`);
-
-    // Once a session sends its first packet, it is no longer in the special
-    // message-0 alignment phase. This is critical for Bob's session, because
-    // Bob sends first and then receives Alice's reply later.
     this.isFirstMessage = false;
 
-    // Fix: If Bob (or Alice later) does not have an active sending chain initialized, 
-    // generate the local keypair and execute a DH step to securely advance the root sequence.
     if (!this.localDhKey) {
       this.localDhKey = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
       const dhBits = await computeDH(this.localDhKey.privateKey, this.remoteDhJwk);
@@ -262,15 +219,10 @@ class RatchetSession {
   }
 
   async decrypt(payload) {
-    console.log("🔓 [Decrypt Action] Processing inbound package...", payload);
-
-    // 1. Check for Message 0 processing
     if (this.isFirstMessage) {
-      console.log("🎯 [Message 0 Alignment] Running initial cryptographic lock step.");
       this.isFirstMessage = false;
-      this.remoteDhJwk = payload.dhHeader; // Update pointer to Alice's active public key
+      this.remoteDhJwk = payload.dhHeader;
     } 
-    // 2. Standard asymmetric rotation step for all subsequent turns
     else {
       const isNewKey = payload.dhHeader && (!this.remoteDhJwk || JSON.stringify(this.remoteDhJwk) !== JSON.stringify(payload.dhHeader));
       if (isNewKey) {

@@ -27,9 +27,6 @@ function setDataChannel(peerId, channel) {
   return channel;
 }
 
-/**
- * Initiator (Alice) requests the server bundle and starts WebRTC setup
- */
 async function handleBundleResponse(msg) {
   currentPeerId = msg.targetId;
   ensureDiscussion(currentPeerId);
@@ -45,21 +42,17 @@ async function handleBundleResponse(msg) {
     trustedFingerprints.add(fp);
   }
 
-  // 1. Run X3DH to build local session state
   const x3dhHeader = await initiateX3DHSession(currentPeerId, msg);
 
-  // 2. Setup standard WebRTC Peer Connection
   pc = getPeerConnection(currentPeerId) || new RTCPeerConnection(config);
   setPeerConnection(currentPeerId, pc);
   
-  // 3. Immediately open the data channel
   dc = getDataChannel(currentPeerId) || pc.createDataChannel("chat");
   setDataChannel(currentPeerId, dc);
   setupDC(currentPeerId, dc);
 
   pc.onicecandidate = e => {
     if (!e.candidate) {
-      console.log("🚀 [ICE Initiator] ICE gathering complete. Sending offer with X3DH header.");
       sendSignal(currentPeerId, {
         sdp: {
           type: pc.localDescription.type,
@@ -74,9 +67,6 @@ async function handleBundleResponse(msg) {
   await pc.setLocalDescription(offer);
 }
 
-/**
- * Attaches event listeners to the data channel cleanly
- */
 function setupDC(peerId = currentPeerId, channel = dc) {
   if (!channel) return;
 
@@ -93,7 +83,6 @@ function setupDC(peerId = currentPeerId, channel = dc) {
       return;
     }
 
-    console.log("Decrypt payload :", payload, peerId, session);
     try {
       const plainText = await session.decrypt(payload);
       appendMessage(peerId, peerId, plainText);
@@ -106,9 +95,6 @@ function setupDC(peerId = currentPeerId, channel = dc) {
   channel.onerror = (err) => console.error("Data Channel Error:", err);
 }
 
-/**
- * Standard inbound signal router with State Guardrails
- */
 async function handleSignal(msg) {
   const signalingPeer = msg.from;
   currentPeerId = signalingPeer;
@@ -121,11 +107,8 @@ async function handleSignal(msg) {
     setPeerConnection(signalingPeer, peerConnection);
   }
 
-  console.log(`📡 [WebRTC Signaling] Signal received from: ${signalingPeer}. Current PC State: ${peerConnection ? peerConnection.signalingState : 'null'}`);
-
   if (!msg.data) return;
 
-  // Extract the structured SDP block safely
   let sdpInit = null;
   if (msg.data.sdp && typeof msg.data.sdp === "object") {
     sdpInit = msg.data.sdp;
@@ -133,7 +116,6 @@ async function handleSignal(msg) {
     sdpInit = msg.data;
   }
 
-  // Handle incoming X3DH bundle initialization
   if (msg.data.x3dh) {
     currentPeerId = signalingPeer;
     await receiveX3DHSession(signalingPeer, msg.data.x3dh);
@@ -143,13 +125,11 @@ async function handleSignal(msg) {
     return;
   }
 
-  // 🔥 STATE GUARDRAIL: Avoid modifying remote answers if our signaling engine is stable
   if (sdpInit.type === "answer" && peerConnection && peerConnection.signalingState === "stable") {
-    console.warn("⚠️ [WebRTC State Guard] Connection already stable. Ignoring duplicate remote answer.");
+    console.warn("[WebRTC State Guard] Connection already stable. Ignoring duplicate remote answer.");
     return;
   }
 
-  // IF we are the Receiver (Bob), initialize our PeerConnection context BEFORE applying descriptions
   if (!peerConnection) {
     peerConnection = new RTCPeerConnection(config);
     setPeerConnection(signalingPeer, peerConnection);
@@ -165,7 +145,6 @@ async function handleSignal(msg) {
 
   peerConnection.onicecandidate = e => {
     if (!e.candidate) {
-      console.log("🚀 [ICE Receiver] ICE gathering complete. Dispatching single answer back.");
       sendSignal(signalingPeer, {
         type: peerConnection.localDescription.type,
         sdp: peerConnection.localDescription.sdp
@@ -173,9 +152,7 @@ async function handleSignal(msg) {
     }
   };
 
-  // Apply remote description safely
   try {
-    console.log(`🔄 [WebRTC State] Applying remote description (${sdpInit.type})...`);
     await peerConnection.setRemoteDescription(new RTCSessionDescription({
       type: sdpInit.type,
       sdp: sdpInit.sdp
@@ -185,14 +162,11 @@ async function handleSignal(msg) {
     return;
   }
 
-  // Generate matching answer ONLY after setRemoteDescription successfully resolves
   if (sdpInit.type === "offer") {
-    console.log("🔄 [WebRTC State] Compiling matching operational answer...");
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
 
     if (peerConnection.iceGatheringState === "complete") {
-      console.log("🚀 [ICE Instant Match] Sending completed answer profile.");
       sendSignal(signalingPeer, {
         type: peerConnection.localDescription.type,
         sdp: peerConnection.localDescription.sdp
@@ -201,9 +175,6 @@ async function handleSignal(msg) {
   }
 }
 
-/**
- * Encrypts and transmits payloads over the DataChannel
- */
 async function sendMessage() {
   const textInput = document.getElementById("msg");
   const text = textInput.value;
