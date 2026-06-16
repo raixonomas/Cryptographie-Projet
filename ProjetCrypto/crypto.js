@@ -64,18 +64,20 @@ async function generateIdentity() {
   mySignedPreKey = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
   
   myOneTimePreKeys = [];
-  for(let i = 0; i < 3; i++) {
+  const NOMBRE_OPK = 50;
+
+  for(let i = 0; i < NOMBRE_OPK; i++) {
     let opk = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
-    opk.kid = `opk_key_${i}`;
+    opk.kid = `opk_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`;
     myOneTimePreKeys.push(opk);
   }
 
   const ikJwk = await crypto.subtle.exportKey("jwk", myIdentityKey.publicKey);
   const spkJwk = await crypto.subtle.exportKey("jwk", mySignedPreKey.publicKey);
   
-  const opkJwks = await Promise.all(myOneTimePreKeys.map(async (k, idx) => {
+  const opkJwks = await Promise.all(myOneTimePreKeys.map(async (k) => {
     const jwk = await crypto.subtle.exportKey("jwk", k.publicKey);
-    jwk.kid = `opk_key_${idx}`; 
+    jwk.kid = k.kid;
     return jwk;
   }));
 

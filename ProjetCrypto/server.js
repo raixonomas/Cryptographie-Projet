@@ -38,12 +38,23 @@ wss.on("connection", (ws) => {
       if (data.type === "get_bundle") {
         const target = users.get(data.targetId);
         if (target && target.bundle) {
+          
+          let selectedOpk = null;
+          if (Array.isArray(target.bundle.opk) && target.bundle.opk.length > 0) {
+            selectedOpk = target.bundle.opk.shift();
+          }
+
           ws.send(JSON.stringify({
             type: "bundle_response",
             targetId: data.targetId,
             ik: target.bundle.ik,
-            spk: target.bundle.spk
+            spk: target.bundle.spk,
+            opk: selectedOpk 
           }));
+
+          if (target.bundle.opk.length === 0) {
+            console.warn(`No more OPK available for user ${data.targetId}!`);
+          }
         }
       }
 
